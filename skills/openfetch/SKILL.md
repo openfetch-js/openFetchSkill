@@ -1,9 +1,11 @@
 ---
 name: openfetch
-description: Use when the user works with @hamdymohamedak/openfetch, openFetch, or a fetch-based HTTP client with interceptors, middleware, retry, or memory cache in Node, browsers, Bun, Deno, Workers, SSR, or React Server Components. Use instead of guessing axios or XHR APIs.
+description: Use when the user works with @hamdymohamedak/openfetch, openFetch, or a fetch-only HTTP client with interceptors, middleware, plugins (retry, timeout, hooks, debug), memory cache (TTL, stale-while-revalidate), fluent chaining (sugar), raw native Response, idempotency keys, or SSR/RSC-safe fetch in Node, browsers, Bun, Deno, or Workers. Use instead of guessing axios or XHR APIs.
 ---
 
 # openFetch agent skill
+
+**Library version this skill targets:** `v0.2.9` (`@hamdymohamedak/openfetch`). Prefer facts here and in [quick reference](./references/quick-reference.md) over guessing other clients’ APIs.
 
 ## Do not assume axios
 
@@ -17,22 +19,47 @@ description: Use when the user works with @hamdymohamedak/openfetch, openFetch, 
 - **Source:** https://github.com/openfetch-js/OpenFetch  
 - **Human docs:** https://openfetch-js.github.io/openfetch-docs/
 
-## Imports (common)
+## Imports
+
+**Main entry** (many symbols are also re-exported here; bundlers can still tree-shake with `"sideEffects": false`):
 
 ```ts
 import openFetch, {
+  create,
   createClient,
   createRetryMiddleware,
   createCacheMiddleware,
   MemoryCacheStore,
+  appendCacheKeyVaryHeaders,
   OpenFetchError,
   isOpenFetchError,
   assertSafeHttpUrl,
+  generateIdempotencyKey,
+  hasIdempotencyKeyHeader,
+  ensureIdempotencyKeyHeader,
+  maskHeaderValues,
+  cloneResponse,
+  redactSensitiveUrlQuery,
+  // Same as @hamdymohamedak/openfetch/plugins:
+  retry,
+  timeout,
+  hooks,
+  debug,
+  strictFetch,
+  // Same as @hamdymohamedak/openfetch/sugar:
+  createFluentClient,
 } from "@hamdymohamedak/openfetch";
 ```
 
+**Subpaths** (explicit splits for tooling that respects `package.json` `exports`):
+
+```ts
+import { retry, timeout, hooks, debug, strictFetch } from "@hamdymohamedak/openfetch/plugins";
+import { createFluentClient } from "@hamdymohamedak/openfetch/sugar";
+```
+
 - Default export `openFetch` = `createClient()` with no initial defaults.
-- `create` is an alias of `createClient`.
+- **`create`** is an alias of **`createClient`**.
 
 ## Client & responses
 
@@ -42,12 +69,14 @@ const api = createClient({
   headers: { Authorization: "Bearer …" },
   timeout: 10_000,
   unwrapResponse: true,
+  assertSafeUrl: true, // runs assertSafeHttpUrl on the resolved URL before fetch
   middlewares: [createRetryMiddleware()],
 });
 ```
 
-- **`unwrapResponse: false` (default):** methods return `OpenFetchResponse<T>` → `{ data, status, statusText, headers, config }`.
-- **`unwrapResponse: true`:** methods return **`T`** (body only).
+- **`unwrapResponse: false` (default):** helpers return `OpenFetchResponse<T>` → `{ data, status, statusText, headers, config }`.
+- **`unwrapResponse: true`:** helpers return **`T`** (body only).
+- **`rawResponse: true`:** `data` is the native **`Response`** with an **unread** body; adapter skips parse + **`transformResponse`**. Request interceptors already ran; **response** interceptors still run (`data` is that `Response`). Middleware that assumes parsed JSON in **`ctx.response.data`** will not see transforms until you read the body. Use **`cloneResponse`** from the package if two independent reads are needed.
 
 Merged config must resolve a **`url`** (absolute, or `baseURL` + relative path). Otherwise the client throws an `Error` whose message includes ``openfetch: `url` is required``.
 
@@ -60,33 +89,67 @@ Merged config must resolve a **`url`** (absolute, or `baseURL` + relative path).
 | `put`, `patch` | Same body rules as `post` |
 | `delete(url, config?)` | No `data` argument; use `config.data` / `config.body` if the API needs a body |
 | `head`, `options` | Same style as `get` |
-| `request(urlOrConfig, config?)` | Full `method`, `responseType`, etc. |
+| `request(urlOrConfig, config?)` | Full `method`, `responseType`, `rawResponse`, etc. |
+
+## Plugins (`retry`, `timeout`, `hooks`, `debug`, `strictFetch`)
+
+Shorthand factories that return **middleware**; register with **`client.use(fn)`** (same as `createRetryMiddleware`, with small DX differences).
+
+```ts
+const client = createClient({ baseURL: "https://api.example.com" })
+  .use(retry({ attempts: 3, baseDelayMs: 400 })) // register retry before timeout
+  .use(timeout(12_000))
+  .use(debug({ includeRequestHeaders: true, maskStrategy: "partial" }));
+```
+
+- **`retry(options)`** — `attempts` aliases **`maxAttempts`**; supports **`timeoutTotalMs`**, **`enforceTotalTimeout`**, **`timeoutPerAttemptMs`**, **`retryNonIdempotentMethods`**, etc. (see retry section).
+- **`timeout(ms)`** — request timeout middleware.
+- **`hooks({ onRequest, onResponse, onError })`** — lifecycle logging/tracing; for transforms prefer **interceptors**.
+- **`debug({ … })`** — structured logs; masked headers via **`maskStrategy`** (`full` | `partial` | `hash`); optional masked request headers; URL query redaction aligned with **`redactSensitiveUrlQuery`**.
+- **`strictFetch()`** — if **`redirect`** is unset, sets **`redirect: 'error'`** so redirects are not followed silently.
+
+**Order:** register **`retry` before `timeout`** so the timeout middleware wraps attempts the way the docs describe.
+
+## Fluent client (`createFluentClient`)
+
+Callable URL + method chaining (Wretch-style): **`fluent("/path").get().json()`**, **`fluent("/x").post(body).send()`**.
+
+- **Terminals** (`.json()`, `.text()`, `.blob()`, `.arrayBuffer()`, `.stream()`, `.send()`, `.raw()`) each start **one** HTTP request unless **`.memo()`** is used on that chain.
+- **`.memo()`** — one round-trip; body buffered once as `ArrayBuffer`; multiple terminals reuse it (this is **not** HTTP cache).
+- **`.raw()`** — same semantics as **`rawResponse: true`**.
 
 ## Interceptors vs middleware
 
 - **Interceptors:** `client.interceptors.request.use` / `response.use` — transform config or response; request stack is **LIFO**, response **FIFO**.
 - **Middleware:** `client.use(fn)` — async `(ctx, next) => …` around the real `fetch`; use for retry, cache, logging. **Order matters** (e.g. cache vs retry).
 
-## Retry (critical default)
+## Retry (`createRetryMiddleware` / `retry()`)
 
-`createRetryMiddleware`: exponential backoff, configurable statuses and network errors.
+Exponential backoff, jitter, configurable HTTP statuses and network/parse retries.
 
 - **By default**, retries for network / parse / retryable HTTP errors apply only to **GET, HEAD, OPTIONS, TRACE** — **not** POST/PUT/PATCH/DELETE (avoid duplicate side effects).
-- Opt in for mutating methods: `retry: { retryNonIdempotentMethods: true }` on the client or per request.
+- Opt in for mutating methods: **`retry: { retryNonIdempotentMethods: true }`** on the client or per request.
+- When **`retryNonIdempotentMethods`** is true, **`maxAttempts > 1`**, method is **POST**, and no idempotency header exists, middleware adds a stable **`Idempotency-Key`** (unless **`autoIdempotencyKey: false`**). Use **`generateIdempotencyKey`**, **`hasIdempotencyKeyHeader`**, **`ensureIdempotencyKeyHeader`** for custom flows.
+- **`timeoutTotalMs`** — monotonic budget for the **whole** retry sequence (including backoff); on expiry: **`OpenFetchError`** code **`ERR_RETRY_TIMEOUT`** (not retried). **`enforceTotalTimeout`** (default true) merges a deadline into **`signal`** per attempt.
+- **`timeoutPerAttemptMs`** — overrides per-attempt **`request.timeout`** inside the retry middleware.
+- **`ERR_CANCELED`** (user/per-attempt timeout abort) is **not** retried.
 
 ## Memory cache
 
-- `new MemoryCacheStore({ maxEntries })` + `createCacheMiddleware(store, { ttlMs, varyHeaderNames, … })`.
-- Default cache key is method + full URL. For **auth / per-user** GETs, set **`varyHeaderNames`** (e.g. `authorization`, `cookie`) or a custom **`key`** so entries do not leak across users.
+- `new MemoryCacheStore({ maxEntries })` + **`createCacheMiddleware(store, { ttlMs, staleWhileRevalidateMs, methods, key, varyHeaderNames, … })`**.
+- Default cache key includes method + full URL; **`authorization`** and **`cookie`** are **always** folded into the key **unless** **`varyHeaderNames`** is explicitly **`[]`** (dangerous for shared auth — see package warning / use **`suppressAuthCacheKeyWarning`** only when intentional). Prefer omitting `varyHeaderNames` or listing extra headers; use **`appendCacheKeyVaryHeaders`** for custom keys.
+- **`staleWhileRevalidateMs`:** can serve stale after TTL and refresh in background; that background path calls **`dispatch` directly** — not every **`client.use()`** middleware runs for it (see human docs architecture note).
 
 ## Errors & logging
 
-- Guard with `isOpenFetchError(err)`.
-- For logs shown to users or shared systems: `error.toShape({ includeResponseData: false, includeResponseHeaders: false })`. The live error may still hold full `config` (including secrets) — never forward raw.
+- Guard with **`isOpenFetchError(err)`**.
+- **`error.toShape()`** / **`toJSON()`** — by default **omits** response **`data`** and **`headers`**; pass **`includeResponseData: true`** / **`includeResponseHeaders: true`** only for trusted diagnostics. **`redactSensitiveUrlQuery`** defaults on for the serialized URL in the shape.
+- The live error may still hold full **`config`** (including secrets) — never forward raw instances to clients.
 
 ## Security
 
-- `assertSafeHttpUrl(url)` — optional guard for untrusted URLs (`http`/`https` only; blocks many literal private/loopback IPs). **Does not** stop DNS rebinding; pair with hostname allowlists / egress controls when relevant.
+- **`assertSafeHttpUrl(url)`** — optional guard for untrusted URLs (`http`/`https` only; blocks many literal private/loopback IPs). **Does not** stop DNS rebinding; pair with hostname allowlists / egress controls when relevant.
+- **`assertSafeUrl: true`** on the client — runs **`assertSafeHttpUrl`** on the **fully resolved** URL before **`fetch`**.
 
 ## Framework usage (minimal)
 
@@ -101,7 +164,9 @@ Merged config must resolve a **`url`** (absolute, or `baseURL` + relative path).
 
 ## Repo layout (for code navigation)
 
-- `src/core/client.ts` — client, verb helpers  
-- `src/core/dispatch.ts` — `fetch`, parse, `validateStatus`  
-- `src/core/middleware.ts`, `interceptors.ts`, `retry.ts`, `cache.ts`, `error.ts`  
-- `docs/PROJECT_FLOW.md` — request lifecycle
+- `src/runtime/client.ts` — client, verb helpers  
+- `src/transport/dispatch.ts` — `fetch`, parse, `validateStatus`, `rawResponse`  
+- `src/runtime/middleware.ts`, `interceptors.ts`, `retry.ts`, `cache.ts`  
+- `src/domain/error.ts` — `OpenFetchError`, `toShape`  
+- `src/plugins/` — `retry`, `timeout`, `hooks`, `debug`, `strictFetch`  
+- `src/sugar/fluent.ts` — `createFluentClient`, `.memo()`, `.raw()`

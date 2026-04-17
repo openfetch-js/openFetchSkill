@@ -1,7 +1,7 @@
 {
   "name": "openfetch",
-  "description": "Agent skill for @hamdymohamedak/openfetch — fetch-only HTTP client (interceptors, middleware, retry, memory cache, RSC-friendly).",
-  "version": "0.2.3",
+  "description": "Agent skill for @hamdymohamedak/openfetch — fetch-only HTTP client: interceptors, middleware, plugins (retry, timeout, hooks, debug), memory cache, fluent sugar API, raw Response, SSR/RSC-friendly.",
+  "version": "0.2.9",
   "author": {
     "name": "openfetch-js"
   },
