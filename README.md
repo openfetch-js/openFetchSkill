@@ -1,24 +1,14 @@
-# openfetchskill — Claude Code plugin bundle
+# openFetch skill (Claude Code plugin)
 
-This folder is the **published plugin** for **`@hamdymohamedak/openfetch` v0.2.9** (pin this line when you cut a release so it matches [`openFetch/package.json`](../openFetch/package.json)). Bump **`.claude-plugin/plugin.json` → `version`** and the **“Library version”** line in `skills/openfetch/SKILL.md` together with that release. Claude Code copies the whole directory into its plugin cache, so the skill and references must live **inside** this tree (not outside).
+An **[Agent Skills](https://agentskills.io/specification)** bundle so coding agents reliably use **[`@hamdymohamedak/openfetch`](https://www.npmjs.com/package/@hamdymohamedak/openfetch)** — the fetch-based HTTP client with interceptors, middleware, retries, caching, and optional fluent APIs — instead of guessing axios-style APIs.
 
-The **library** (types, runtime, npm metadata) lives in **[`openFetch/`](../openFetch/)** — [`package.json`](../openFetch/package.json), [`src/`](../openFetch/src/), [`README.md`](../openFetch/README.md), [`CHANGELOG.md`](../openFetch/CHANGELOG.md).
+**Targets library version:** `v0.2.9` (see [`skills/openfetch/SKILL.md`](./skills/openfetch/SKILL.md)).
 
-The bundled **`skills/openfetch/SKILL.md`** follows the [Agent Skills](https://agentskills.io/specification) `SKILL.md` shape (YAML frontmatter + Markdown). That format is what registries and tools such as **[skills.sh](https://skills.sh)** expect for portable agent skills.
+## Why install this
 
-## Layout
-
-```text
-openfetchskill/
-├── .claude-plugin/
-│   └── plugin.json          # plugin manifest
-├── skills/
-│   └── openfetch/
-│       ├── SKILL.md         # agent skill (YAML frontmatter + body)
-│       └── references/      # optional deep docs
-│           └── quick-reference.md
-└── README.md
-```
+- **Accurate defaults** — e.g. retry only on safe methods unless configured otherwise; `fetch`-only transport.
+- **Up-to-date surface** — plugins (`retry`, `timeout`, `debug`, …), sugar/fluent client, `rawResponse`, cache keying, idempotency helpers.
+- **Portable format** — same `SKILL.md` layout used by registries and tools such as **[skills.sh](https://skills.sh)**.
 
 ## Install (Claude Code)
 
@@ -27,12 +17,30 @@ claude plugin marketplace add openfetch-js/OpenFetch
 claude plugin install openfetch@openfetch-js
 ```
 
-Use `hamdymohamedak/OpenFetch` if that is your fork.
+If you use a fork, substitute the GitHub owner in both commands (for example `your-org/OpenFetch`).
 
-## Authoring
+## What’s in the package
 
-Edit **`skills/openfetch/SKILL.md`** (and `references/`). Keep frontmatter **`name`** aligned with the skill folder name.
+| Path | Purpose |
+|------|--------|
+| [`.claude-plugin/plugin.json`](./.claude-plugin/plugin.json) | Plugin manifest for Claude Code |
+| [`skills/openfetch/SKILL.md`](./skills/openfetch/SKILL.md) | Primary skill (YAML frontmatter + instructions) |
+| [`skills/openfetch/references/quick-reference.md`](./skills/openfetch/references/quick-reference.md) | Compact API and config reference |
 
-## Structure reference (template)
+```text
+openfetchskill/
+├── .claude-plugin/
+│   └── plugin.json
+├── skills/
+│   └── openfetch/
+│       ├── SKILL.md
+│       └── references/
+│           └── quick-reference.md
+└── README.md
+```
 
-To generate a **new** skill with the same folder pattern, copy from **[`openFetch/examples/claude-skill/`](../openFetch/examples/claude-skill/README.md)** (see also [`openFetch/examples/README.md`](../openFetch/examples/README.md)).
+## Learn the library
+
+- **Documentation:** [openfetch-js.github.io/openfetch-docs](https://openfetch-js.github.io/openfetch-docs/)
+- **Source & issues:** [github.com/openfetch-js/OpenFetch](https://github.com/openfetch-js/OpenFetch)
+- **Skill spec:** [agentskills.io/specification](https://agentskills.io/specification)

@@ -1,0 +1,112 @@
+# openFetch — LLM / agent context
+
+> **Package:** `@hamdymohamedak/openfetch` **v0.2.9** — fetch-only HTTP client (ESM). **Node 18+**. No axios / XHR on the transport path.
+
+## Project
+
+- GitHub (source): https://github.com/openfetch-js/OpenFetch
+- npm: https://www.npmjs.com/package/@hamdymohamedak/openfetch
+- Docs site (GitHub Pages): https://openfetch-js.github.io/openfetch-docs/
+- **This file (machine-oriented summary):** https://openfetch-js.github.io/openfetch-docs/llms.txt
+- VitePress `base` is `/openfetch-docs/` — prefix relative doc paths below with that base when resolving URLs (e.g. `/skills` → `https://openfetch-js.github.io/openfetch-docs/skills`).
+- Path map: English at `/` (default), locale hubs at `/ar/`, `/es/`, …, hub at `/languages/`.
+- Package layout & request lifecycle: [docs/PROJECT_FLOW.md](https://github.com/openfetch-js/OpenFetch/blob/main/docs/PROJECT_FLOW.md) in the library repo.
+
+## Install & import
+
+```bash
+npm install @hamdymohamedak/openfetch
+```
+
+**Core client**
+
+```ts
+import openFetch, {
+  create,
+  createClient,
+  createRetryMiddleware,
+  createCacheMiddleware,
+  MemoryCacheStore,
+  OpenFetchError,
+  isOpenFetchError,
+  assertSafeHttpUrl,
+} from "@hamdymohamedak/openfetch";
+```
+
+**Tree-shakable subpaths (v0.2.8+)**
+
+```ts
+import { retry, timeout, hooks, debug, strictFetch } from "@hamdymohamedak/openfetch/plugins";
+import { createFluentClient } from "@hamdymohamedak/openfetch/sugar";
+```
+
+- Default export `openFetch` = `createClient()` with no initial defaults.
+- `create` is an alias of `createClient`.
+
+## Client API (concise)
+
+- `createClient(initialDefaults?)` — returns `OpenFetchClient`.
+- Methods (merge `defaults` + per-call config):
+  - `get(url, config?)`, `head`, `options` — optional `params` → query string.
+  - `post(url, data?, config?)`, `put`, `patch` — optional `data`; plain objects → JSON + `content-type: application/json` unless already set; `FormData` / `URLSearchParams` / `Blob` / binary views are not forced to JSON.
+  - `delete(url, config?)` — no `data` argument; use `config.data` / `config.body` if the API needs a body.
+  - `request(urlOrConfig, config?)` — full `method`, `responseType`, `rawResponse`, etc.
+- `client.use(middleware)` — appends to `defaults.middlewares`.
+- `client.interceptors.request.use` / `response.use` — request stack **LIFO**, response **FIFO**.
+- Throws if merged config has no resolvable `url` (message includes ``openfetch: `url` is required``).
+
+## Response shape
+
+- Default (`unwrapResponse` falsy): `Promise<OpenFetchResponse<T>>` → `{ data, status, statusText, headers, config }`.
+- `unwrapResponse: true`: `Promise<T>` (body only).
+- **`rawResponse` / fluent `.raw()`** (v0.2.8+): native `Response` as `data` without adapter body parsing on that path; client response interceptors still run.
+
+## Config highlights
+
+- `baseURL`, `url`, `params`, `headers`, `timeout`, `signal`, `data` / `body`, `auth` (Basic), `withCredentials`, `responseType` (`json`|`text`|`blob`|`arraybuffer`|`stream`), `rawResponse`, `validateStatus` (default 2xx), `transformRequest` / `transformResponse` (arrays concatenated), `middlewares`, `retry`, `memoryCache`, plus `RequestInit` passthrough fields.
+
+## Errors
+
+- `OpenFetchError` with `code`: `ERR_BAD_RESPONSE`, `ERR_NETWORK`, `ERR_PARSE`, `ERR_CANCELED`.
+- Use `error.toShape({ includeResponseData: false, includeResponseHeaders: false })` before client-facing or shared logs.
+
+## Middleware & plugins
+
+- **`createRetryMiddleware()`** — exponential backoff; by default **does not** retry non-idempotent methods for network/status retries unless `retryNonIdempotentMethods: true`. Optional total / per-attempt timeouts, idempotency key helpers for retried POSTs.
+- **`createCacheMiddleware(store, options)`** — GET/HEAD in-memory; use `varyHeaderNames` or custom `key` when responses vary by auth.
+- **`@hamdymohamedak/openfetch/plugins`** — `retry()`, `timeout()`, `hooks()`, `debug()` (e.g. masked headers), `strictFetch()`.
+- **`@hamdymohamedak/openfetch/sugar`** — `createFluentClient()`: URL + method chaining, terminals `.json()` / `.text()` / `.send()` / `.raw()`, optional `.memo()` (one round-trip, buffered body — not HTTP cache).
+
+## Security
+
+- `assertSafeHttpUrl(url)` — optional guard for untrusted URLs (http/https; blocks some literal private/loopback IPs). **Not** a full SSRF defense when hostnames are attacker-controlled (DNS rebinding); pair with allowlists / network policy when relevant.
+
+## Framework usage (short)
+
+- React: `useEffect` + `openFetch.get(fullUrl)`; JSON → `res.data`; cancel on unmount with `AbortController` / flag when needed.
+- Vue 3: `onMounted` + `openFetch.get(fullUrl)` → `ref.value = res.data`.
+- RSC: `await openFetch.get(fullUrl)` in an async server component when supported.
+- Examples: `/framework-guides` (English), `/ar/framework-guides` (Arabic).
+
+## Doc map (English paths)
+
+- `/` — overview
+- `/getting-started` — install, default client, first middleware
+- `/http-methods` — GET/POST/PUT/PATCH/DELETE/`request`
+- `/framework-guides` — React & Vue, RSC notes
+- `/configuration` — `OpenFetchConfig`, merge rules, `rawResponse`, helpers
+- `/plugins-fluent` — `/plugins`, `/sugar`, fluent `.memo()` / `.raw()`, ordering
+- `/interceptors-middleware` — lifecycle, `dispatch`, `ctx.error` vs `ctx.response`
+- `/architecture` — diagrams, internals
+- `/retry-cache` — retry budgets, cache, SWR-style patterns
+- `/errors-security` — errors, safe logging, `assertSafeHttpUrl`
+- `/skills` — AI-oriented API summary; Agent Skills / **skills.sh** context for the published `openfetchskill` bundle
+- `/languages/` — translations
+
+## Agent skills (Cursor, Claude Code, compatible tools)
+
+**This directory** is the published plugin (**[openfetch-js/openFetchSkill](https://github.com/openfetch-js/openFetchSkill)**). The same tree is maintained under **`openfetchskill/`** in **[openfetch-js/OpenFetch](https://github.com/openfetch-js/OpenFetch)**. Spec: [Agent Skills](https://agentskills.io/specification). Hub: [skills.sh](https://skills.sh). Human overview: [openfetch-docs `/skills`](https://openfetch-js.github.io/openfetch-docs/skills).
+
+## Human readers
+
+Use the VitePress site for prose, examples, and translations; use **this `llms.txt`** as a compact, copy-friendly factsheet for models and agents.
