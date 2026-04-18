@@ -1,24 +1,26 @@
 # openFetch — LLM / agent context
 
-> **Package:** `@hamdymohamedak/openfetch` **v0.2.9** — fetch-only HTTP client (ESM). **Node 18+**. No axios / XHR on the transport path.
+> **Package:** `@hamdymohamedak/openfetch` **v0.2.9** — fetch-only HTTP client (ESM). **Node 18+**. **Zero runtime dependencies.** No XHR on the transport path.
 
 ## Project
 
 - GitHub (source): https://github.com/openfetch-js/OpenFetch
 - npm: https://www.npmjs.com/package/@hamdymohamedak/openfetch
 - Docs site (GitHub Pages): https://openfetch-js.github.io/openfetch-docs/
-- **This file (machine-oriented summary):** https://openfetch-js.github.io/openfetch-docs/llms.txt
-- VitePress `base` is `/openfetch-docs/` — prefix relative doc paths below with that base when resolving URLs (e.g. `/skills` → `https://openfetch-js.github.io/openfetch-docs/skills`).
-- Path map: English at `/` (default), locale hubs at `/ar/`, `/es/`, …, hub at `/languages/`.
-- Package layout & request lifecycle: [docs/PROJECT_FLOW.md](https://github.com/openfetch-js/OpenFetch/blob/main/docs/PROJECT_FLOW.md) in the library repo.
+- **This file:** https://openfetch-js.github.io/openfetch-docs/llms.txt
+- VitePress `base` is `/openfetch-docs/` — prefix doc paths with that base when building absolute URLs.
+- Locales: `/` (English), `/ar/`, `/es/`, `/fa/`, `/fr/`, `/hi/`, `/it/`, `/ja/`, `/kr/`, `/ku/`, hub `/languages/`.
+- Library design & pipeline: [docs/PROJECT_FLOW.md](https://github.com/openfetch-js/OpenFetch/blob/main/docs/PROJECT_FLOW.md).
 
-## Install & import
+## Install
 
 ```bash
 npm install @hamdymohamedak/openfetch
 ```
 
-**Core client**
+## Imports
+
+**Default + core**
 
 ```ts
 import openFetch, {
@@ -27,86 +29,171 @@ import openFetch, {
   createRetryMiddleware,
   createCacheMiddleware,
   MemoryCacheStore,
+  appendCacheKeyVaryHeaders,
   OpenFetchError,
   isOpenFetchError,
+  isHTTPError,
+  isTimeoutError,
+  SchemaValidationError,
+  isSchemaValidationError,
+  OpenFetchForceRetry,
+  isOpenFetchForceRetry,
   assertSafeHttpUrl,
+  maskHeaderValues,
+  redactSensitiveUrlQuery,
+  DEFAULT_SENSITIVE_QUERY_PARAM_NAMES,
+  cloneResponse,
+  generateIdempotencyKey,
+  hasIdempotencyKeyHeader,
+  ensureIdempotencyKeyHeader,
+  InterceptorManager,
 } from "@hamdymohamedak/openfetch";
 ```
 
-**Tree-shakable subpaths (v0.2.8+)**
+**Tree-shakable subpaths**
 
 ```ts
 import { retry, timeout, hooks, debug, strictFetch } from "@hamdymohamedak/openfetch/plugins";
 import { createFluentClient } from "@hamdymohamedak/openfetch/sugar";
 ```
 
-- Default export `openFetch` = `createClient()` with no initial defaults.
-- `create` is an alias of `createClient`.
+- `openFetch` default export = `createClient()` with no defaults. `create` === `createClient`.
 
-## Client API (concise)
+## Client API
 
-- `createClient(initialDefaults?)` — returns `OpenFetchClient`.
-- Methods (merge `defaults` + per-call config):
-  - `get(url, config?)`, `head`, `options` — optional `params` → query string.
-  - `post(url, data?, config?)`, `put`, `patch` — optional `data`; plain objects → JSON + `content-type: application/json` unless already set; `FormData` / `URLSearchParams` / `Blob` / binary views are not forced to JSON.
-  - `delete(url, config?)` — no `data` argument; use `config.data` / `config.body` if the API needs a body.
-  - `request(urlOrConfig, config?)` — full `method`, `responseType`, `rawResponse`, etc.
+- `createClient(initialDefaults?: OpenFetchConfig)` → `{ defaults, get, post, put, patch, delete, head, options, request, use, interceptors }`.
+- Verbs: `get|head|options(url, config?)` (optional `params`); `post|put|patch(url, data?, config?)` (JSON hint for plain objects); `delete(url, config?)` (body via `config`); `request(url | URL | Request | RequestConfig, config?)`.
 - `client.use(middleware)` — appends to `defaults.middlewares`.
-- `client.interceptors.request.use` / `response.use` — request stack **LIFO**, response **FIFO**.
-- Throws if merged config has no resolvable `url` (message includes ``openfetch: `url` is required``).
+- `interceptors.request` / `interceptors.response` — `InterceptorManager`; request handlers **LIFO**, response **FIFO**.
+- Missing `url` after merge → `Error` with ``openfetch: `url` is required``.
 
-## Response shape
+## mergeConfig (defaults + per-call)
 
-- Default (`unwrapResponse` falsy): `Promise<OpenFetchResponse<T>>` → `{ data, status, statusText, headers, config }`.
-- `unwrapResponse: true`: `Promise<T>` (body only).
-- **`rawResponse` / fluent `.raw()`** (v0.2.8+): native `Response` as `data` without adapter body parsing on that path; client response interceptors still run.
+- Top-level keys: later wins.
+- `headers`: shallow merge.
+- `middlewares`, `transformRequest`, `transformResponse`, `init`: **concatenated** (defaults first).
+- `retry`, `memoryCache`: shallow merge; `retry.onBeforeRetry` and `retry.onAfterResponse` **composed** (defaults first, then per-call).
+- Strips prototype-pollution keys from merged objects and nested `headers` / `retry` / `memoryCache`.
 
-## Config highlights
+## OpenFetchConfig (feature surface)
 
-- `baseURL`, `url`, `params`, `headers`, `timeout`, `signal`, `data` / `body`, `auth` (Basic), `withCredentials`, `responseType` (`json`|`text`|`blob`|`arraybuffer`|`stream`), `rawResponse`, `validateStatus` (default 2xx), `transformRequest` / `transformResponse` (arrays concatenated), `middlewares`, `retry`, `memoryCache`, plus `RequestInit` passthrough fields.
+**URL & query:** `url`, `baseURL`, `params`, `paramsSerializer`, `assertSafeUrl` (runs `assertSafeHttpUrl` on resolved URL before fetch).
+
+**Request:** `method`, `headers`, `data`, `body`, `signal`, `timeout` (internal abort → `ERR_TIMEOUT` if user signal not aborted), `auth` (Basic), `withCredentials`, `credentials` and other `RequestInit`: `cache`, `integrity`, `keepalive`, `mode`, `redirect`, `referrer`, `referrerPolicy`.
+
+**Response handling:** `responseType` (`json`|`text`|`blob`|`arraybuffer`|`stream`); suggested `Accept` when `responseType` set and no `accept`; `rawResponse` (native `Response` as `data`, skip parse + `transformResponse`); `validateStatus(status)=>boolean` (default 2xx); `throwHttpErrors` (Ky-style when `validateStatus` omitted: `false` = never throw on status; function = throw when returns true for that status); `jsonSchema` (Standard Schema on parsed JSON after success); `transformRequest[]`, `transformResponse[]`.
+
+**Lifecycle:** `init[]` — sync `(config)=>void` on merged config after merge, before request interceptors.
+
+**Stack:** `middlewares[]`, `retry` (see below), `memoryCache` (cache middleware hints).
+
+**Ergonomics:** `unwrapResponse` — helpers return `data` only.
+
+**Observability:** `debug` — `true` | `"verbose"` | `"basic"` | omit/false; `logger` — `(OpenFetchDebugEvent)=>void` optional; structured lifecycle events (see **Client debug pipeline**).
+
+## OpenFetchResponse
+
+`{ data, status, statusText, headers: Record<string,string>, config }`. With `rawResponse`, `data` is native `Response` (unread body unless caller reads).
+
+## Request pipeline (one call)
+
+`mergeConfig` → `init[]` → request interceptors → middleware stack (often retry wraps inner) → **`dispatch`** (build URL, transforms, fetch, parse, validateStatus, jsonSchema, transformResponse) → response interceptors → return or unwrap.
+
+## dispatch (inner transport)
+
+- `buildURL` + optional `assertSafeHttpUrl`.
+- Lowercase headers; Basic `auth`; `transformRequest` chain; JSON body default for plain objects.
+- `mergeAbortSignals(userSignal, timeoutController)`.
+- Parse body by `responseType` or `Content-Type` heuristic; JSON parse failures may fall back to raw string in some paths; hard parse failure → `ERR_PARSE`.
+- `validateStatus` false → `OpenFetchError` `ERR_BAD_RESPONSE` with response.
+- `jsonSchema` → `validateJsonWithStandardSchema`; failure → `SchemaValidationError` (not `OpenFetchError`).
+
+## Retry (`createRetryMiddleware` / `retry()` plugin)
+
+- Exponential backoff + jitter; `maxAttempts` (alias `attempts` on plugin), `baseDelayMs`, `maxDelayMs`, `factor`.
+- `retryOnStatus` (default includes 408, 429, 5xx), `retryOnNetworkError`, `retryNonIdempotentMethods`, `autoIdempotencyKey` (POST + idempotency header helpers).
+- `timeoutTotalMs` + `enforceTotalTimeout` (deadline signal per attempt vs between attempts only); `timeoutPerAttemptMs`.
+- `shouldRetry(error, attempt)`, `onBeforeRetry(ctx, { attempt, error })`, `onAfterResponse(ctx, response)` — throw **`OpenFetchForceRetry`** to force another attempt after a successful dispatch.
+- Failure codes that stop retry: `ERR_CANCELED`, `ERR_RETRY_TIMEOUT`.
+
+## Memory cache (`createCacheMiddleware` + `MemoryCacheStore`)
+
+- GET/HEAD; TTL, stale-while-revalidate; `memoryCache.skip`; key vary via `varyHeaderNames` or `appendCacheKeyVaryHeaders`; custom `key` in options.
 
 ## Errors
 
-- `OpenFetchError` with `code`: `ERR_BAD_RESPONSE`, `ERR_NETWORK`, `ERR_PARSE`, `ERR_CANCELED`.
-- Use `error.toShape({ includeResponseData: false, includeResponseHeaders: false })` before client-facing or shared logs.
+**OpenFetchError `code`:** `ERR_BAD_RESPONSE`, `ERR_NETWORK`, `ERR_PARSE`, `ERR_CANCELED`, `ERR_TIMEOUT`, `ERR_RETRY_TIMEOUT`.
 
-## Middleware & plugins
+**Guards:** `isOpenFetchError`, `isHTTPError`, `isTimeoutError`, `isSchemaValidationError`, `isOpenFetchForceRetry`.
 
-- **`createRetryMiddleware()`** — exponential backoff; by default **does not** retry non-idempotent methods for network/status retries unless `retryNonIdempotentMethods: true`. Optional total / per-attempt timeouts, idempotency key helpers for retried POSTs.
-- **`createCacheMiddleware(store, options)`** — GET/HEAD in-memory; use `varyHeaderNames` or custom `key` when responses vary by auth.
-- **`@hamdymohamedak/openfetch/plugins`** — `retry()`, `timeout()`, `hooks()`, `debug()` (e.g. masked headers), `strictFetch()`.
-- **`@hamdymohamedak/openfetch/sugar`** — `createFluentClient()`: URL + method chaining, terminals `.json()` / `.text()` / `.send()` / `.raw()`, optional `.memo()` (one round-trip, buffered body — not HTTP cache).
+**Serialization:** `error.toShape()` / `toJSON()` — omit sensitive fields by default; optional `includeResponseData`, `includeResponseHeaders`, `redactSensitiveUrlQuery` for trusted diagnostics.
 
-## Security
+**Schema:** `SchemaValidationError` with `issues` (Standard Schema).
 
-- `assertSafeHttpUrl(url)` — optional guard for untrusted URLs (http/https; blocks some literal private/loopback IPs). **Not** a full SSRF defense when hostnames are attacker-controlled (DNS rebinding); pair with allowlists / network policy when relevant.
+## Standard Schema
+
+- `jsonSchema` on config; types `StandardSchemaV1`, issues, infer helpers exported.
+- Fluent: `.json(schema)` on chains (sugar).
+
+## Plugins (`@hamdymohamedak/openfetch/plugins`)
+
+| Export | Role |
+|--------|------|
+| `retry(options?)` | `createRetryMiddleware` + `attempts` → `maxAttempts` alias. |
+| `timeout(ms)` | Sets `timeout` on `ctx.request` per middleware layer. |
+| `hooks({ onRequest, onResponse, onError, onBeforeRetry, onAfterResponse })` | Middleware + merges retry hooks into `ctx.request.retry`. |
+| `debug(options?)` | Middleware: phases `request` / `response` / `error`; masked headers; URL query redaction; custom `log`. **Not** the same as `createClient({ debug, logger })`. |
+| `strictFetch()` | Sets `redirect: "error"` when unset. |
+
+## Fluent (`@hamdymohamedak/openfetch/sugar`)
+
+- `createFluentClient(defaults)` — callable URL + `.get()|.post(data)|…` chains.
+- Terminals: `.json()`, `.json(schema)`, `.text()`, `.blob()`, `.arrayBuffer()`, `.stream()`, `.raw()`, `.send()`; `.memo()` buffers one response for multiple terminals (not HTTP cache).
+- Exposes `defaults`, `use`, `interceptors`, imperative verbs.
+
+## Client debug pipeline (`createClient` — built-in)
+
+- Set `debug: true` or `"verbose"` for full lifecycle; `"basic"` for only `request`, final `response`, and `error`.
+- Optional `logger(event)`; default sink `console.debug` with `[OpenFetch]` prefix.
+- **`OpenFetchDebugEvent`:** `{ stage, timestamp, ...meta }`.
+- Verbose stages include: `config`, `init`, `request` (built URL + redacted query + masked headers), `attempt_start`, `fetch`, `fetch_complete`, `parse`, `schema`, `hook_after_response` (force retry), `retry` (with `reason` e.g. `forceRetry`, `timeout`, `http_503`, `network`, …), final `response` (`durationMs` wall time), `error` (truncated stack, `code` when `OpenFetchError`).
+- Uses `redactSensitiveUrlQuery` and `maskHeaderValues` in logs.
+
+## Main-package utilities (debugging & safety)
+
+- `assertSafeHttpUrl`, `maskHeaderValues` (`partial`|`full`|`hash`), `redactSensitiveUrlQuery`, `DEFAULT_SENSITIVE_QUERY_PARAM_NAMES`, `cloneResponse`, idempotency key helpers, `InterceptorManager`.
+
+## Security notes
+
+- `assertSafeHttpUrl` blocks some literal private IPs in URLs; **not** full SSRF protection for attacker-controlled hostnames (DNS rebinding). Pair with allowlists / egress policy when needed.
+- Never log raw `OpenFetchError` instances to untrusted clients; use `toShape()`.
 
 ## Framework usage (short)
 
-- React: `useEffect` + `openFetch.get(fullUrl)`; JSON → `res.data`; cancel on unmount with `AbortController` / flag when needed.
-- Vue 3: `onMounted` + `openFetch.get(fullUrl)` → `ref.value = res.data`.
-- RSC: `await openFetch.get(fullUrl)` in an async server component when supported.
-- Examples: `/framework-guides` (English), `/ar/framework-guides` (Arabic).
+- React / Vue: `useEffect` / `onMounted` + verb helpers; cancel with `AbortController`.
+- RSC: `await client.get(...)` in async server components when appropriate.
+- Doc: `/framework-guides`, `/ar/framework-guides`.
 
-## Doc map (English paths)
+## Doc map (English paths; prefix `/openfetch-docs/` for GitHub Pages)
 
 - `/` — overview
-- `/getting-started` — install, default client, first middleware
-- `/http-methods` — GET/POST/PUT/PATCH/DELETE/`request`
-- `/framework-guides` — React & Vue, RSC notes
-- `/configuration` — `OpenFetchConfig`, merge rules, `rawResponse`, helpers
-- `/plugins-fluent` — `/plugins`, `/sugar`, fluent `.memo()` / `.raw()`, ordering
-- `/interceptors-middleware` — lifecycle, `dispatch`, `ctx.error` vs `ctx.response`
-- `/architecture` — diagrams, internals
-- `/retry-cache` — retry budgets, cache, SWR-style patterns
-- `/errors-security` — errors, safe logging, `assertSafeHttpUrl`
-- `/skills` — AI-oriented API summary; Agent Skills / **skills.sh** context for the published `openfetchskill` bundle
-- `/languages/` — translations
+- `/getting-started` — install, first request, middleware
+- `/http-methods` — verbs and `request()`
+- `/framework-guides` — React, Vue, RSC
+- `/configuration` — full config, merge rules, exports table
+- `/debugging` — client `debug`/`logger` pipeline vs `debug()` plugin, stages, safe logging
+- `/plugins-fluent` — plugins + fluent API, ordering
+- `/interceptors-middleware` — stack order, `ctx.error` vs `ctx.response`
+- `/architecture` — internals
+- `/features-pipeline` — inventory + diagrams
+- `/retry-cache` — retry budgets, cache, SWR
+- `/errors-security` — errors, `toShape`, redaction
+- `/skills` — AI summary + Agent Skills / openfetchskill
 
-## Agent skills (Cursor, Claude Code, compatible tools)
+## Agent skills
 
-**This directory** is the published plugin (**[openfetch-js/openFetchSkill](https://github.com/openfetch-js/openFetchSkill)**). The same tree is maintained under **`openfetchskill/`** in **[openfetch-js/OpenFetch](https://github.com/openfetch-js/OpenFetch)**. Spec: [Agent Skills](https://agentskills.io/specification). Hub: [skills.sh](https://skills.sh). Human overview: [openfetch-docs `/skills`](https://openfetch-js.github.io/openfetch-docs/skills).
+Published: **[openfetch-js/openFetchSkill](https://github.com/openfetch-js/openFetchSkill)** (`SKILL.md` + `references/`). Spec: [Agent Skills](https://agentskills.io/specification). Hub: [skills.sh](https://skills.sh).
 
 ## Human readers
 
-Use the VitePress site for prose, examples, and translations; use **this `llms.txt`** as a compact, copy-friendly factsheet for models and agents.
+Use the VitePress site for prose and examples; use **this `llms.txt`** as a compact factsheet for models and agents.
